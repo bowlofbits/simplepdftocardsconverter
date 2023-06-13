@@ -295,7 +295,7 @@ def buildcards(headerspara, filename,headerdepth):
                 validheaders[i]=""
                 i+=1  
 
-        blocktext=blocktext+text
+        blocktext=blocktext+" "+text
     
     #in the last step, if there is still data left in the blocktext, then it needs to be added to the last card
     if len(blocktext)>0:
