@@ -296,8 +296,10 @@ def buildcards(headerspara, filename,headerdepth):
                 i+=1  
 
         blocktext=blocktext+text
-
-    # go through the cards and split the text if 
+    
+    #in the last step, if there is still data left in the blocktext, then it needs to be added to the last card
+    if len(blocktext)>0:
+        cards.append(finishcard(validheaders,metadata,blocktext))
     return cards
 
 def splitcards(cards,maxcardcharacterlength,overlap):
