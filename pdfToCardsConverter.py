@@ -29,8 +29,6 @@ def getweightedfontncolorstatisticsofdoc(doc):
                 for l in b["lines"]:
                     for s in l["spans"]:
                         if not s['text'].isspace():#do not count empty text elements
-                            # print(s)
-                            # print(s['color'])
                             if s['color'] in colorstats:
                                 colorstats[s['color']]=colorstats[s['color']]+1
                             else:
@@ -68,10 +66,10 @@ def getblockswithgranularityColorFont(page,fontstats,colorstats,usefontsNcolor):
         for b in blocks:
             if b['type'] == 0:  # this block contains text
                 applyfontcolorrezize=False
-                #only apply size augmentation of enitre line has the same properties
+                #only apply size augmentation of entire line has the same properties
                 for l in b['lines']:
-                    fontlist=[s['font'] for s in l["spans"] if not s['text'].isspace()]
-                    colorlist=[s['color'] for s in l["spans"]if not s['text'].isspace()]
+                    fontlist=[s['font'] for s in l["spans"] if not s['text'].isspace() and not "@" in s['text']]
+                    colorlist=[s['color'] for s in l["spans"]if not s['text'].isspace() and not "@" in s['text']]
                 if all_equal(fontlist) and all_equal(colorlist):
                     applyfontcolorrezize=True
                     #print("allcolorline is true for:",l)
@@ -79,7 +77,7 @@ def getblockswithgranularityColorFont(page,fontstats,colorstats,usefontsNcolor):
                     for s in l["spans"]:
                         size=float(s['size'])
                         if applyfontcolorrezize and not s['text'].isspace():
-                            s['size']= size*size+ size *(1/colorstats[s['color']])#+ 0.5*size *(1/fontstats[s['font']]) 
+                            s['size']= size*size+ size*size *(1/fontstats[s['font']]) +size *0.5*(1/colorstats[s['color']])#+ 0.5* 
                         else:
                             s['size']= size*size
                  
@@ -150,7 +148,7 @@ def font_tags(font_counts, styles):
             font_sizes.append(float(font_size))
 
     font_sizes.sort(reverse=True)
-    print('fontsize:',font_sizes)
+    print('font sizes\n:',font_sizes)
     # aggregating the tags for each font size
     idx = 0
     size_tag = {}
@@ -280,7 +278,8 @@ def buildcards(headerspara, filename,headerdepth):
         
         denominator =re.sub("[^0-9]", "", rawdem)
 
-        if denominator !="" and denominator.isnumeric() and "<h" in rawdem and int(denominator)<=headerdepth:
+        #split at header
+        if denominator !="" and denominator.isnumeric() and "<h" in rawdem and int(denominator)<=headerdepth and "@" not in text:
             # finish previous card
             denominator = int(denominator)
             
@@ -294,9 +293,10 @@ def buildcards(headerspara, filename,headerdepth):
             while i<=headerdepth: 
                 validheaders[i]=""
                 i+=1  
+            text=""
 
-        blocktext=blocktext+" "+text
-    
+        blocktext=blocktext +" "+text
+
     #in the last step, if there is still data left in the blocktext, then it needs to be added to the last card
     if len(blocktext)>0:
         cards.append(finishcard(validheaders,metadata,blocktext))
@@ -309,7 +309,6 @@ def splitcards(cards,maxcardcharacterlength,overlap):
     for card in cards:
         value =""
         value = card[keytobesplit]
-        
         if len(value) > maxcardcharacterlength:
          
             i = 0
@@ -359,11 +358,11 @@ def selectsmallestheadinglvl(size_tag):
     filteredVal= filter(lambda x: x>smallestfont, sorted_values)
     #print("filteredvals:", type(min(filteredVal)))
     fV=min(filteredVal)
-    print("smallestfont:",smallestfont)
+    #print("smallestfont:",smallestfont)
     selected=size_tag[fV]#[k for k,x in size_tag.items() if float(k)==fV]
-    print("selected:", selected)
+    #print("\nselected header:", selected)
     
-    print(size_tag)
+    #print(size_tag)
     #print("selectedsize:", int(size_tag[min(filteredVal)].replace("<h","").replace(">","")))
     
     #a=qw
@@ -394,15 +393,15 @@ def convertpdftocards(pdfpath,maxcardcharacterlength,overlap, usefontsNcolor=Tru
     fontstats,colorstats=getweightedfontncolorstatisticsofdoc(doc)
 
     font_counts, styles=fonts(doc,fontstats,colorstats,usefontsNcolor)
-    for k,s in styles.items():
-        print("style:",s)
+    # for k,s in styles.items():
+    #     print("style:",s)
     size_tag =font_tags(font_counts, styles)
 
     headinglvl=selectsmallestheadinglvl(size_tag)
     #print(headinglvl)
     result = headers_para(doc,size_tag,fontstats,colorstats,usefontsNcolor)
 
-    #print("\n",result)
+    
     
     #remove the - binding word in linebreaks
     cresults=[]
@@ -410,9 +409,10 @@ def convertpdftocards(pdfpath,maxcardcharacterlength,overlap, usefontsNcolor=Tru
        t=re.sub(r'([a-zA-Z])- ([a-z])', r'\1\2', ele)
        cresults.append(charactercleanup(t))
 
+    #print("\n HeadersPara:",cresults)
     cards= buildcards(cresults, pdfpath,headinglvl)
     scards=splitcards(cards,maxcardcharacterlength,overlap)
-    return  [x for x in scards if not x['page_content'].isspace()]
+    return  [x for x in scards if not x['page_content'].isspace() and not x['page_content']==""]
 
 # def main():
     
