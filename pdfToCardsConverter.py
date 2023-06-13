@@ -1,7 +1,96 @@
 import sys, fitz
 import re
 
-def fonts(doc, granularity=False):
+
+
+def all_equal(iterator):
+    iterator = iter(iterator)
+    try:
+        first = next(iterator)
+    except StopIteration:
+        return True
+    return all(first == x for x in iterator)
+
+
+def getweightedfontncolorstatisticsofdoc(doc):
+    """PDF statistics regarding font and color
+    :param page: page of docment
+    :return: {font:count}{color:count}
+    """
+    colorstats={}
+    fontstats={}
+    linecount=0.0
+    for page in doc:
+        blocks= page.get_text("dict")["blocks"]
+        
+        #get statistics of color and fonts 
+        for b in blocks:
+            if b["type"] == 0:  # this block contains text
+                for l in b["lines"]:
+                    for s in l["spans"]:
+                        if not s['text'].isspace():#do not count empty text elements
+                            # print(s)
+                            # print(s['color'])
+                            if s['color'] in colorstats:
+                                colorstats[s['color']]=colorstats[s['color']]+1
+                            else:
+                                colorstats[s['color']]=1.0
+                            if s['font'] in fontstats:
+                                fontstats[s['font']]=fontstats[s['font']]+1
+                            else:
+                                fontstats[s['font']]=1.0
+                                #artificially increase the size of the element
+                            linecount+=1
+    #calcstatistics
+    for k,c in colorstats.items():
+        colorstats[k]=c/linecount
+    for r,sq in fontstats.items():
+        fontstats[r]=sq/linecount
+
+    return fontstats,colorstats
+
+def getblockswithgranularityColorFont(page,fontstats,colorstats,usefontsNcolor):
+    """Extracts blocks using color and font in addition to size.
+    :param page: page of doc
+    :param fontstats: statistics of the fonts
+    :param fontstats: statistics of the color
+    :type doc: <class 'fitz.fitz.Document'>
+    :param granularity: also use 'font', 'flags' and 'color' to discriminate text
+    :type granularity: bool
+    :rtype: page blocks 
+    :return: blocks
+    """
+    rat = 1.618*1
+    if usefontsNcolor:
+        blocks= page.get_text("dict")["blocks"]
+
+        #augment the font sizes
+        for b in blocks:
+            if b['type'] == 0:  # this block contains text
+                applyfontcolorrezize=False
+                #only apply size augmentation of enitre line has the same properties
+                for l in b['lines']:
+                    fontlist=[s['font'] for s in l["spans"] if not s['text'].isspace()]
+                    colorlist=[s['color'] for s in l["spans"]if not s['text'].isspace()]
+                if all_equal(fontlist) and all_equal(colorlist):
+                    applyfontcolorrezize=True
+                    #print("allcolorline is true for:",l)
+                for l in b['lines']:
+                    for s in l["spans"]:
+                        size=float(s['size'])
+                        if applyfontcolorrezize and not s['text'].isspace():
+                            s['size']= size*size+ size *(1/colorstats[s['color']])#+ 0.5*size *(1/fontstats[s['font']]) 
+                        else:
+                            s['size']= size*size
+                 
+        return blocks
+    else:
+        return page.get_text("dict")["blocks"]
+
+    #go through blocks and if color != 
+
+
+def fonts(doc,fontstats,colorstats,usefontsNcolor):
     """Extracts fonts and their usage in PDF documents.
     :param doc: PDF document to iterate through
     :type doc: <class 'fitz.fitz.Document'>
@@ -14,12 +103,13 @@ def fonts(doc, granularity=False):
     font_counts = {}
 
     for page in doc:
-        blocks = page.get_text("dict")["blocks"]
+        #blocks = page.get_text("dict")["blocks"]
+        blocks = getblockswithgranularityColorFont(page, fontstats,colorstats,usefontsNcolor)
         for b in blocks:  # iterate through the text blocks
             if b['type'] == 0:  # block contains text
                 for l in b["lines"]:  # iterate through the text lines
                     for s in l["spans"]:  # iterate through the text spans
-                        if granularity:
+                        if usefontsNcolor:
                             identifier = "{0}_{1}_{2}_{3}".format(s['size'], s['flags'], s['font'], s['color'])
                             styles[identifier] = {'size': s['size'], 'flags': s['flags'], 'font': s['font'],
                                                   'color': s['color']}
@@ -50,10 +140,17 @@ def font_tags(font_counts, styles):
 
     # sorting the font sizes high to low, so that we can append the right integer to each tag 
     font_sizes = []
-    for (font_size, count) in font_counts:
-        font_sizes.append(float(font_size))
-    font_sizes.sort(reverse=True)
 
+    #print("font_counts:",font_counts)
+    for (font_size, count) in font_counts:
+        #print("fontsize:",font_size, " count:", count)
+        if "_"in font_size: #special handling if granularity in function fonts is set to true
+            font_sizes.append(float(font_size.split("_")[0]))
+        else:
+            font_sizes.append(float(font_size))
+
+    font_sizes.sort(reverse=True)
+    print('fontsize:',font_sizes)
     # aggregating the tags for each font size
     idx = 0
     size_tag = {}
@@ -69,7 +166,7 @@ def font_tags(font_counts, styles):
 
     return size_tag
 
-def headers_para(doc, size_tag):
+def headers_para(doc, size_tag,fontstats,colorstats,usefontsNcolor):
     """Scrapes headers & paragraphs from PDF and return texts with element tags.
     :param doc: PDF document to iterate through
     :type doc: <class 'fitz.fitz.Document'>
@@ -87,22 +184,24 @@ def headers_para(doc, size_tag):
     for page in doc:
         header_para.append("<-Page "+str(pcount)+">")
         pcount+=1
-        blocks = page.get_text("dict")["blocks"]
+        #blocks = page.get_text("dict")["blocks"]
+        blocks = getblockswithgranularityColorFont(page, fontstats,colorstats,usefontsNcolor)
         for b in blocks:  # iterate through the text blocks
             if b['type'] == 0:  # this block contains text
-
+                #print("block:",b)
                 # REMEMBER: multiple fonts and sizes are possible IN one block
 
                 block_string = ""  # text found in block
                 for l in b["lines"]:  # iterate through the text lines
                     for s in l["spans"]:  # iterate through the text spans
                         if s['text'].strip():  # removing whitespaces:
+                            #print("block:",b,"\n")
                             if first:
                                 previous_s = s
                                 first = False
                                 block_string = size_tag[s['size']] + s['text']
                             else:
-                                if s['size'] == previous_s['size']:
+                                if s['size'] == previous_s['size']: # connect all elements as long as they are of the same size
 
                                     if block_string and all((c == "|") for c in block_string):
                                         # block_string only contains pipes
@@ -113,7 +212,7 @@ def headers_para(doc, size_tag):
                                     else:  # in the same block, so concatenate strings
                                         block_string += " " + s['text']
 
-                                else:
+                                else: # this code only switches size tag if size changes, independent of the the color etc. 
                                     header_para.append(block_string)
                                     block_string = size_tag[s['size']] + s['text']
 
@@ -129,18 +228,23 @@ def headers_para(doc, size_tag):
 
 #def turntexttocards(headerspara,chunksize=500,overlap=50):
 def finishcard(validheaders,metadata,cardtext):
-    # finish previous card
+    # helper function for buildcards finish previous card
     
     card={}
     card["metadata"]={}
     card["metadata"]["source"]= metadata[0]+" "+''.join(metadata[1])
-    card["metadata"]["heading"]= ' '.join(validheaders)
+    card["metadata"]["title"]= ' '.join(validheaders)
     card["page_content"]=cardtext
     
     return card
 
 def buildcards(headerspara, filename,headerdepth):
-    #go through the elements 
+    """From marked text that includes html header markings, this function builds a series of text blocks .
+    :param headerspara: text with html header markings 
+    :param filename: name of the pdf file processed / source
+    :param headerdepth: lvl of header which shall be includd in the title of a text block e.g. 4 means up to <h4>
+    :return: "cards" with a [{"page_content": text, "metadata":{"source":, "title"}} ]
+    """
     validheaders=[]
     i=0
     while i<=headerdepth: 
@@ -197,6 +301,7 @@ def buildcards(headerspara, filename,headerdepth):
     return cards
 
 def splitcards(cards,maxcardcharacterlength,overlap):
+    # split card page content to ensure a mximum text length with an overlap to previous text
     result = []
     keytobesplit='page_content'
     for card in cards:
@@ -233,57 +338,91 @@ def splitcards(cards,maxcardcharacterlength,overlap):
     return result
 
 def selectsmallestheadinglvl(size_tag):
+    """Select suitable headinging depth .
+    :param size_tag: statistics about the pdf fonts  
+    :return: selected heading lvl->  lvl of header which shall be includd in the title of a text block e.g. 4 means up to <h4>
+    """
     count=0
     rat=1.618
     headings  = {key: value for key, value in size_tag.items() if 'h' in value}
     sorted_values = sorted(headings.keys(), reverse=True)
     
-    smallestfont= float(sorted_values[1])/rat
+    smallestfont=999
+    if len(sorted_values)>1:
+        smallestfont= float(sorted_values[1])/rat
 
-    filteredVal= filter(lambda x: x>smallestfont, size_tag)
+    elif len(sorted_values)==1:
+        smallestfont=float(sorted_values[0])/rat
 
+    filteredVal= filter(lambda x: x>smallestfont, sorted_values)
+    #print("filteredvals:", type(min(filteredVal)))
+    fV=min(filteredVal)
+    print("smallestfont:",smallestfont)
+    selected=size_tag[fV]#[k for k,x in size_tag.items() if float(k)==fV]
+    print("selected:", selected)
+    
+    print(size_tag)
+    #print("selectedsize:", int(size_tag[min(filteredVal)].replace("<h","").replace(">","")))
+    
+    #a=qw
     try:
-        return int(size_tag[min(filteredVal)].replace("<h","").replace(">","")) #re.sub("[^0-9]", "", size_tag[min(filteredVal)])
+        return int(selected.replace("<h","").replace(">","")) #re.sub("[^0-9]", "", size_tag[min(filteredVal)])
     except:
         return 3 #default
 
 def charactercleanup(text):
-    return ''.join(c for c in text if c.isalnum() or c.isspace() or c in '.,?!<>')
+    return ''.join(c for c in text if c.isprintable()) #c.isalnum() or c.isspace() or c in '.,?!<>' or
 
 
-def pdftocardsconverter(pdfpath,maxcardcharacterlength,overlap ):
+def convertpdftocards(pdfpath,maxcardcharacterlength,overlap, usefontsNcolor=True ):
+    """turn pdf into text blocks / "cards" as if a human would read the document and split it into cards for memorizing and organizing the text.
+     This function splits text along headings and page breaks 
+    :param pdfpath: path to pdf
+    :param maxcardcharacterlength: max size of card
+    :param overlap: overlap between textblocks
+    :param usefontsNcolor: use fonts and color as distinguishing characteristics to detect headers
+    :return: pdf split in cards by detected header
+    """ 
     
-    print(pdfpath)
+
+
+    print("PDFtoCards: ",pdfpath)
     doc = fitz.open(pdfpath)  # open document
 
-    font_counts, styles=fonts(doc)
+    fontstats,colorstats=getweightedfontncolorstatisticsofdoc(doc)
+
+    font_counts, styles=fonts(doc,fontstats,colorstats,usefontsNcolor)
+    for k,s in styles.items():
+        print("style:",s)
     size_tag =font_tags(font_counts, styles)
 
     headinglvl=selectsmallestheadinglvl(size_tag)
     #print(headinglvl)
-    result = headers_para(doc,size_tag)
+    result = headers_para(doc,size_tag,fontstats,colorstats,usefontsNcolor)
 
+    #print("\n",result)
     
     #remove the - binding word in linebreaks
     cresults=[]
     for ele in result:
-       t=re.sub("[a-zA-Z]- [a-z]", "", ele)
+       t=re.sub(r'([a-zA-Z])- ([a-z])', r'\1\2', ele)
        cresults.append(charactercleanup(t))
 
     cards= buildcards(cresults, pdfpath,headinglvl)
-    return  splitcards(cards,maxcardcharacterlength,overlap)
+    scards=splitcards(cards,maxcardcharacterlength,overlap)
+    return  [x for x in scards if not x['page_content'].isspace()]
 
-def main():
-    file_path="C:/Users/PJ/Desktop/OLDDesktop/PnP/DND Zeug sammlung/Dungeons and Dragons/Sa DnD Books/Core/Player's Handbook (HQ).pdf"
-    #source_directory = os.environ.get('SOURCE_DIRECTORY', 'source_documents')
-    #file_path = "E:/WinPrivateGPT/privateGPT/source_documents/link-Einzelabschluss_TKAG_2019_2020_EN.pdf"
-    scards= pdftocardsconverter(file_path,500,50 )
-    for c in scards:
-       asd=1
-       print(c,"\n\n")
+# def main():
+    
+#     #source_directory = os.environ.get('SOURCE_DIRECTORY', 'source_documents')
+#     #file_path = "E:/WinPrivateGPT/privateGPT/source_documents/link-Einzelabschluss_TKAG_2019_2020_EN.pdf"
+#     scards= pdftocardsconverter(file_path,500,50 )
+#     for c in scards:
+#        asd=1
+#        print(c,"\n\n")
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
 
 
 
